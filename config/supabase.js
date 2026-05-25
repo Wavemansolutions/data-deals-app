@@ -1,21 +1,10 @@
-require('dotenv').config();
-
 const { createClient } = require('@supabase/supabase-js');
 
-console.log('URL:', process.env.SUPABASE_URL);
-console.log('ANON:', process.env.SUPABASE_ANON_KEY);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
-
-module.exports = {
-  supabase,
-  supabaseAdmin
-};
+module.exports = { supabase, supabaseAdmin };
