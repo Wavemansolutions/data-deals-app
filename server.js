@@ -45,6 +45,26 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+
+const server = app.listen(PORT, () => {
+  console.log(`[v0] Server running on port ${PORT}`);
+  console.log(`[v0] NODE_ENV: ${process.env.NODE_ENV}`);
+  console.log(`[v0] FRONTEND_URL: ${process.env.FRONTEND_URL}`);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('[v0] Server error:', error);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[v0] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('[v0] Uncaught Exception:', error);
+  process.exit(1);
 });
