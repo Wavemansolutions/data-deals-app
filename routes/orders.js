@@ -62,29 +62,54 @@ router.post('/checkout', async (req, res) => {
     }
 
     // Create Payvessel payment initialization
-    console.log('[v0] Initializing Payvessel payment for:', { email, amount: plan.price });
+    console.log('[v0] Initializing Payvessel payment for:', { email, amount: plan.price, planId });
     
-    const payvesselResponse = await payvesselApi.post('/transactions/initialize', {
-      email: email,
-      amount: plan.price,
-      currency: 'NGN',
-      description: `${plan.label} - ${plan.duration} Data Plan`,
-      metadata: {
-        userId,
-        planId,
-        macAddress,
-        planLabel: plan.label,
-        planCategory: plan.category,
-        planDuration: plan.duration
-      },
-      return_url: `${process.env.CALLBACK_URL}?reference={REFERENCE}`
+    let payvesselResponse;
+    try {
+      payvesselResponse = await payvesselApi.post('/transactions/initialize', {
+        email: email,
+        amount: plan.price,
+        currency: 'NGN',
+        description: `${plan.label} - ${plan.duration} Data Plan`,
+        metadata: {
+          userId,
+          planId,
+          macAddress,
+          planLabel: plan.label,
+          planCategory: plan.category,
+          planDuration: plan.duration
+        },
+        return_url: `${process.env.CALLBACK_URL}?reference={REFERENCE}`
+      });
+    } catch (payvesselError) {
+      console.error('[v0] Payvessel API error:', {
+        message: payvesselError.message,
+        status: payvesselError.response?.status,
+        data: payvesselError.response?.data
+      });
+      throw new Error(`Payvessel API failed: ${payvesselError.message}`);
+    }
+
+    console.log('[v0] Payvessel response:', {
+      success: payvesselResponse.data.success,
+      hasData: !!payvesselResponse.data.data,
+      keys: payvesselResponse.data.data ? Object.keys(payvesselResponse.data.data) : []
     });
 
-    console.log('[v0] Payvessel response:', payvesselResponse.data);
+    if (!payvesselResponse.data?.success) {
+      console.log('[v0] Payvessel unsuccessful response:', payvesselResponse.data);
+      return res.status(400).json({ 
+        error: 'Failed to initialize payment',
+        details: payvesselResponse.data 
+      });
+    }
 
-    if (!payvesselResponse.data.success) {
-      console.log('[v0] Payvessel error:', payvesselResponse.data);
-      return res.status(400).json({ error: 'Failed to initialize payment', details: payvesselResponse.data });
+    if (!payvesselResponse.data.data?.payment_url) {
+      console.log('[v0] Missing payment_url in response:', payvesselResponse.data.data);
+      return res.status(400).json({ 
+        error: 'Payment URL not provided by Payvessel',
+        details: payvesselResponse.data.data 
+      });
     }
 
     const reference = payvesselResponse.data.data.reference;
