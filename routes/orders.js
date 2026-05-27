@@ -5,6 +5,12 @@ const { supabase } = require('../config/supabase');
 const { authMiddleware } = require('../middleware/auth');
 const crypto = require('crypto');
 
+// Test endpoint
+router.get('/test', (req, res) => {
+  console.log('[v0] Test endpoint called');
+  res.json({ status: 'Orders route is working', timestamp: new Date().toISOString() });
+});
+
 // Initialize Payvessel payment (no auth required)
 router.post('/checkout', async (req, res) => {
   try {
