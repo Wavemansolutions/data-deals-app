@@ -35,12 +35,19 @@ app.use('/api/device', require('./routes/device'));
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'Backend is running' });
+  res.json({ status: 'Backend is running', timestamp: new Date().toISOString() });
+});
+
+// 404 handler
+app.use((req, res) => {
+  console.warn(`[v0] 404 - Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({ error: 'Route not found', path: req.path, method: req.method });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('[v0] Error middleware caught:', err.message);
+  console.error('[v0] Stack:', err.stack);
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
