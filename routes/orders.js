@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { payvesselApi } = require('../config/paystack');
+const { payvesselApi } = require('../config/payvessel');
 const { supabase } = require('../config/supabase');
 const { authMiddleware } = require('../middleware/auth');
 const crypto = require('crypto');
@@ -13,41 +13,55 @@ router.get('/test', (req, res) => {
 
 // Initialize Payvessel payment (no auth required)
 router.post('/checkout', async (req, res) => {
+  console.log('[v0] ===== CHECKOUT ENDPOINT CALLED =====');
+  console.log('[v0] Request body:', JSON.stringify(req.body));
+  
   try {
     const { planId, macAddress, email } = req.body;
-    console.log('[v0] Checkout request:', { planId, macAddress, email });
+    console.log('[v0] Step 1: Extracted values - planId:', planId, 'email:', email, 'mac:', macAddress);
 
     // Validate inputs
     if (!planId || !macAddress || !email) {
-      console.log('[v0] Missing required fields');
+      console.log('[v0] Step 1 FAILED: Missing required fields');
       return res.status(400).json({ error: 'planId, macAddress, and email are required' });
     }
+    console.log('[v0] Step 1: PASSED - All inputs valid');
 
-    // Get plan details
+    // Step 2: Get plan details
+    console.log('[v0] Step 2: Querying Supabase for plan:', planId);
     const { data: plan, error: planError } = await supabase
       .from('plans')
       .select('*')
       .eq('id', planId)
       .single();
 
-    console.log('[v0] Plan lookup:', { planId, plan, planError });
+    console.log('[v0] Step 2 result:', { 
+      planFound: !!plan, 
+      planError: planError?.message,
+      planData: plan ? { id: plan.id, label: plan.label, price: plan.price } : null
+    });
 
     if (planError || !plan) {
-      console.log('[v0] Plan not found:', planError);
-      return res.status(404).json({ error: 'Plan not found' });
+      console.log('[v0] Step 2 FAILED - Plan not found:', planError?.message);
+      return res.status(404).json({ error: 'Plan not found', details: planError?.message });
     }
+    console.log('[v0] Step 2: PASSED - Plan found');
 
-    // Create or get guest user by email
-    const { data: existingUser } = await supabase
+    // Step 3: Create or get guest user by email
+    console.log('[v0] Step 3: Looking up user by email:', email);
+    const { data: existingUser, error: userLookupError } = await supabase
       .from('users')
       .select('id')
       .eq('email', email)
       .single();
 
+    console.log('[v0] Step 3 result:', { userFound: !!existingUser, userLookupError: userLookupError?.message });
+
     let userId = existingUser?.id;
 
     // If user doesn't exist, create a guest user
     if (!userId) {
+      console.log('[v0] Step 3b: Creating new guest user');
       const { data: newUser, error: createError } = await supabase
         .from('users')
         .insert([{
@@ -59,19 +73,23 @@ router.post('/checkout', async (req, res) => {
         .single();
 
       if (createError) {
-        console.error('User creation error:', createError);
+        console.error('[v0] Step 3b: User creation failed:', createError);
         // Use email hash as fallback userId
         userId = crypto.createHash('md5').update(email).digest('hex');
+        console.log('[v0] Step 3b: Using fallback userId (hash)');
       } else {
         userId = newUser?.id;
+        console.log('[v0] Step 3b: PASSED - New user created:', userId);
       }
     }
+    console.log('[v0] Step 3: PASSED - userId:', userId);
 
-    // Create Payvessel payment initialization
-    console.log('[v0] Initializing Payvessel payment for:', { email, amount: plan.price, planId });
+    // Step 4: Create Payvessel payment initialization
+    console.log('[v0] Step 4: Initializing Payvessel payment for:', { email, amount: plan.price, planId });
     
     let payvesselResponse;
     try {
+      console.log('[v0] Step 4: Calling Payvessel API...');
       payvesselResponse = await payvesselApi.post('/transactions/initialize', {
         email: email,
         amount: plan.price,
@@ -87,8 +105,9 @@ router.post('/checkout', async (req, res) => {
         },
         return_url: `${process.env.CALLBACK_URL}?reference={REFERENCE}`
       });
+      console.log('[v0] Step 4: Payvessel API responded');
     } catch (payvesselError) {
-      console.error('[v0] Payvessel API error:', {
+      console.error('[v0] Step 4 FAILED - Payvessel API error:', {
         message: payvesselError.message,
         status: payvesselError.response?.status,
         data: payvesselError.response?.data
@@ -96,14 +115,14 @@ router.post('/checkout', async (req, res) => {
       throw new Error(`Payvessel API failed: ${payvesselError.message}`);
     }
 
-    console.log('[v0] Payvessel response:', {
-      success: payvesselResponse.data.success,
-      hasData: !!payvesselResponse.data.data,
-      keys: payvesselResponse.data.data ? Object.keys(payvesselResponse.data.data) : []
+    console.log('[v0] Step 4 result:', {
+      success: payvesselResponse.data?.success,
+      hasData: !!payvesselResponse.data?.data,
+      keys: payvesselResponse.data?.data ? Object.keys(payvesselResponse.data.data) : []
     });
 
     if (!payvesselResponse.data?.success) {
-      console.log('[v0] Payvessel unsuccessful response:', payvesselResponse.data);
+      console.log('[v0] Step 4 FAILED - Payvessel unsuccessful response:', payvesselResponse.data);
       return res.status(400).json({ 
         error: 'Failed to initialize payment',
         details: payvesselResponse.data 
@@ -111,33 +130,37 @@ router.post('/checkout', async (req, res) => {
     }
 
     if (!payvesselResponse.data.data?.payment_url) {
-      console.log('[v0] Missing payment_url in response:', payvesselResponse.data.data);
+      console.log('[v0] Step 4 FAILED - Missing payment_url in response');
       return res.status(400).json({ 
         error: 'Payment URL not provided by Payvessel',
         details: payvesselResponse.data.data 
       });
     }
+    console.log('[v0] Step 4: PASSED - Payment URL obtained');
 
     const reference = payvesselResponse.data.data.reference;
 
-    // Store pending order
-    const { error: orderError } = await supabase
-      .from('orders')
-      .insert([{
-        user_id: userId,
-        plan_id: planId,
-        status: 'pending',
-        paystack_reference: reference,
-        mac_address: macAddress,
-        amount: plan.price
-      }]);
+    // Step 5: Store pending order
+    console.log('[v0] Step 5: Storing order in Supabase');
+      const { error: orderError } = await supabase
+        .from('orders')
+        .insert([{
+          user_id: userId,
+          plan_id: planId,
+          status: 'pending',
+          payvessel_reference: reference,
+          mac_address: macAddress,
+          amount: plan.price
+        }]);
 
     if (orderError) {
-      console.error('Order creation error:', orderError);
-      // Continue even if order creation fails - user can still complete payment
+      console.error('[v0] Step 5 WARNING - Order creation error (continuing):', orderError);
+    } else {
+      console.log('[v0] Step 5: PASSED - Order created');
     }
 
-    console.log('[v0] Payment URL:', payvesselResponse.data.data.payment_url);
+    console.log('[v0] ===== CHECKOUT SUCCESS =====');
+    console.log('[v0] Sending response with payment URL');
     
     res.json({
       success: true,
@@ -145,9 +168,10 @@ router.post('/checkout', async (req, res) => {
       reference: reference
     });
   } catch (error) {
-    console.error('[v0] Checkout error:', error);
-    console.error('[v0] Error response:', error.response?.data);
+    console.error('[v0] ===== CHECKOUT FAILED =====');
+    console.error('[v0] Error caught in main catch:', error);
     console.error('[v0] Error message:', error.message);
+    console.error('[v0] Error stack:', error.stack);
     res.status(500).json({ error: error.message || 'Payment initialization failed' });
   }
 });
@@ -222,9 +246,9 @@ router.post('/verify-payment', async (req, res) => {
         .from('orders')
         .update({
           status: 'completed',
-          paystack_reference: reference
+          payvessel_reference: reference
         })
-        .eq('paystack_reference', reference);
+        .eq('payvessel_reference', reference);
 
       if (updateError) throw updateError;
 
@@ -306,7 +330,7 @@ router.post('/webhook', express.json(), async (req, res) => {
       const { error: updateError } = await supabase
         .from('orders')
         .update({ status: 'completed' })
-        .eq('paystack_reference', reference);
+        .eq('payvessel_reference', reference);
 
       if (updateError) throw updateError;
 
